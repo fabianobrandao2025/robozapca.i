@@ -1,48 +1,60 @@
 # -*- coding: utf-8 -*-
 import os
-import requests
 import pandas as pd
 import zipfile
 import io
 from flask import Flask, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
+from ftplib import FTP  # Importa a biblioteca correta para FTP
+import atexit
 
 # Configura o logging para vermos o que o robô está a fazer
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
+# --- ALTERAÇÃO IMPORTANTE PARA CORRIGIR ACENTOS ---
+app.config['JSON_AS_ASCII'] = False
+# ---------------------------------------------------
 
-# URL oficial para o download da base de dados
-FTP_URL = "ftp://ftp.mtps.gov.br/portal/fiscalizacao/seguranca-e-saude-no-trabalho/caepi/tgg_export_caepi.zip"
+# Detalhes do servidor FTP
+FTP_HOST = "ftp.mtps.gov.br"
+FTP_PATH = "/portal/fiscalizacao/seguranca-e-saude-no-trabalho/caepi/"
+FTP_FILENAME = "tgg_export_caepi.zip"
 
 # Variável global para guardar os dados dos C.A.s em memória
 ca_data = pd.DataFrame()
 
 def atualizar_base_de_dados():
     """
-    Esta função baixa a base de dados do governo, processa-a e
+    Esta função baixa a base de dados do governo via FTP, processa-a e
     guarda na memória para consultas ultra-rápidas.
     """
     global ca_data
-    logging.info("A iniciar a atualização da base de dados do CAEPI...")
+    logging.info("A iniciar a atualização da base de dados do CAEPI via FTP...")
     try:
-        # Baixa o ficheiro .zip
-        response = requests.get(FTP_URL, timeout=300) # Timeout de 5 minutos
-        response.raise_for_status()
-        logging.info("Download do ficheiro .zip concluído com sucesso.")
+        # Conecta-se ao servidor FTP
+        with FTP(FTP_HOST, timeout=300) as ftp: # Timeout de 5 minutos
+            ftp.login()  # Login anónimo
+            ftp.cwd(FTP_PATH) # Entra na pasta correta
+
+            # Prepara um buffer em memória para receber o ficheiro
+            ftp_buffer = io.BytesIO()
+            
+            # Baixa o ficheiro para o buffer
+            ftp.retrbinary(f"RETR {FTP_FILENAME}", ftp_buffer.write)
+            ftp_buffer.seek(0) # Volta ao início do buffer para leitura
+            logging.info("Download do ficheiro .zip via FTP concluído com sucesso.")
 
         # Extrai o ficheiro .txt do .zip em memória
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+        with zipfile.ZipFile(ftp_buffer) as z:
             # Encontra o nome do ficheiro .txt dentro do zip
             txt_filename = [name for name in z.namelist() if name.endswith('.txt')][0]
             with z.open(txt_filename) as txt_file:
-                # Lê o ficheiro .txt com o Pandas, que é ótimo para lidar com dados
-                # Usamos 'latin1' que é a codificação comum para ficheiros de governos brasileiros
-                # O separador é o '|' (pipe), como vimos no documento do MTE
-                df = pd.read_csv(txt_file, sep='|', encoding='latin1', on_bad_lines='skip')
+                # Lê o ficheiro .txt com o Pandas
+                df = pd.read_csv(txt_file, sep='|', encoding='latin1', on_bad_lines='skip', low_memory=False)
                 
-                # Renomeia a primeira coluna que vem com um caractere estranho
+                # Renomeia a primeira coluna
                 df = df.rename(columns={df.columns[0]: 'NRRegistroCA'})
                 
                 # Define a coluna do C.A. como o nosso índice para buscas rápidas
@@ -60,7 +72,7 @@ def index():
     if not ca_data.empty:
         return f"<h1>Robô ZapCA.I está no ar!</h1><p>Base de dados carregada com {len(ca_data)} registos.</p>"
     else:
-        return "<h1>Robô ZapCA.I está no ar!</h1><p>A aguardar o carregamento da base de dados. Por favor, tente novamente em alguns minutos.</p>"
+        return "<h1>Robô ZapCA.I está no ar!</h1><p>A carregar a base de dados em segundo plano. Por favor, tente a sua consulta em alguns minutos.</p>"
 
 @app.route('/consulta/<int:numero_ca>')
 def api_consulta_ca(numero_ca):
@@ -80,17 +92,16 @@ def api_consulta_ca(numero_ca):
 
 # --- Agendador para Atualização Automática ---
 scheduler = BackgroundScheduler(daemon=True)
-# Agenda a atualização para acontecer todos os dias às 3 da manhã
+# Agenda a primeira atualização para acontecer imediatamente em segundo plano
+scheduler.add_job(atualizar_base_de_dados)
+# Agenda a atualização diária para acontecer todos os dias às 3 da manhã
 scheduler.add_job(atualizar_base_de_dados, 'cron', hour=3, minute=0)
 scheduler.start()
 
-# Inicia a primeira atualização assim que o robô liga
-try:
-    atualizar_base_de_dados()
-except Exception as e:
-    logging.error(f"Erro na primeira carga da base de dados: {e}")
-
+# Garante que o agendador seja desligado corretamente quando a aplicação fechar
+atexit.register(lambda: scheduler.shutdown())
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
+
