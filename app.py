@@ -6,14 +6,14 @@ import io
 from flask import Flask, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
-from ftplib import FTP  # Importa a biblioteca correta para FTP
+from ftplib import FTP
 import atexit
 
 # Configura o logging para vermos o que o robô está a fazer
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
-# --- ALTERAÇÃO IMPORTANTE PARA CORRIGIR ACENTOS ---
+# --- Linha para corrigir os acentos na resposta ---
 app.config['JSON_AS_ASCII'] = False
 # ---------------------------------------------------
 
@@ -51,8 +51,24 @@ def atualizar_base_de_dados():
             # Encontra o nome do ficheiro .txt dentro do zip
             txt_filename = [name for name in z.namelist() if name.endswith('.txt')][0]
             with z.open(txt_filename) as txt_file:
-                # Lê o ficheiro .txt com o Pandas
-                df = pd.read_csv(txt_file, sep='|', encoding='latin1', on_bad_lines='skip', low_memory=False)
+                
+                # --- OTIMIZAÇÃO DE MEMÓRIA ---
+                # Definimos os tipos de dados das colunas para usar menos memória
+                dtype_map = {
+                    'NRProcesso': 'str',
+                    'CNPJ': 'str',
+                    'RazaoSocial': 'str',
+                    'Natureza': 'str',
+                    'NomeEquipamento': 'str',
+                    'DescEquipamento': 'str',
+                    'LocalMarcacaoCA': 'str',
+                    'Referencia': 'str',
+                    'Cor': 'str'
+                }
+                # -----------------------------
+
+                # Lê o ficheiro .txt com o Pandas, aplicando a otimização de memória
+                df = pd.read_csv(txt_file, sep='|', encoding='latin1', on_bad_lines='skip', low_memory=False, dtype=dtype_map)
                 
                 # Renomeia a primeira coluna
                 df = df.rename(columns={df.columns[0]: 'NRRegistroCA'})
@@ -104,4 +120,5 @@ atexit.register(lambda: scheduler.shutdown())
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
+
 
