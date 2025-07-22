@@ -10,7 +10,9 @@ from ftplib import FTP
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
+# --- ALTERAÇÃO IMPORTANTE PARA CORRIGIR ACENTOS ---
 app.config['JSON_AS_ASCII'] = False
+# ---------------------------------------------------
 
 # Detalhes do servidor FTP
 FTP_HOST = "ftp.mtps.gov.br"
@@ -83,5 +85,3 @@ def api_consulta_ca(numero_ca):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
-
-
